@@ -358,62 +358,23 @@ func TestCreateSymlink_SymlinkInCurrentDir(t *testing.T) {
 	}
 }
 
-func TestRun_Help(t *testing.T) {
-	r, w, _ := os.Pipe()
-	err := run([]string{"--help"}, w, os.Stderr)
-	w.Close()
-
-	if err != errHelp {
-		t.Errorf("expected errHelp, got: %v", err)
-	}
-
-	var buf [4096]byte
-	n, _ := r.Read(buf[:])
-	output := string(buf[:n])
-
-	if !strings.Contains(output, "symlink - create symlinks without the ln footguns") {
-		t.Error("help output missing header")
+func TestCLI_Help(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"--help"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Errorf("help should not error: %v", err)
 	}
 }
 
-func TestRun_HelpShort(t *testing.T) {
-	r, w, _ := os.Pipe()
-	err := run([]string{"-h"}, w, os.Stderr)
-	w.Close()
+func TestCLI_InvalidType(t *testing.T) {
+	tempDir := t.TempDir()
+	target := filepath.Join(tempDir, "target")
+	os.WriteFile(target, []byte("x"), 0644)
 
-	if err != errHelp {
-		t.Errorf("expected errHelp, got: %v", err)
-	}
-
-	var buf [4096]byte
-	n, _ := r.Read(buf[:])
-	output := string(buf[:n])
-
-	if !strings.Contains(output, "symlink - create symlinks without the ln footguns") {
-		t.Error("help output missing header")
-	}
-}
-
-func TestRun_NoArgs(t *testing.T) {
-	r, w, _ := os.Pipe()
-	err := run([]string{}, w, os.Stderr)
-	w.Close()
-
-	if err != errUsage {
-		t.Errorf("expected errUsage, got: %v", err)
-	}
-
-	var buf [4096]byte
-	n, _ := r.Read(buf[:])
-	output := string(buf[:n])
-
-	if !strings.Contains(output, "symlink - create symlinks without the ln footguns") {
-		t.Error("usage output missing header")
-	}
-}
-
-func TestRun_InvalidType(t *testing.T) {
-	err := run([]string{"invalid", "absolute"}, os.Stdout, os.Stderr)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"invalid", "absolute", "--new-symlink", "/tmp/a", "--existing-target", target})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for invalid type")
 	}
@@ -422,8 +383,14 @@ func TestRun_InvalidType(t *testing.T) {
 	}
 }
 
-func TestRun_InvalidPathMode(t *testing.T) {
-	err := run([]string{"file", "invalid"}, os.Stdout, os.Stderr)
+func TestCLI_InvalidPathMode(t *testing.T) {
+	tempDir := t.TempDir()
+	target := filepath.Join(tempDir, "target")
+	os.WriteFile(target, []byte("x"), 0644)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file", "invalid", "--new-symlink", "/tmp/a", "--existing-target", target})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for invalid path mode")
 	}
@@ -432,110 +399,113 @@ func TestRun_InvalidPathMode(t *testing.T) {
 	}
 }
 
-func TestRun_MissingNewSymlink(t *testing.T) {
+func TestCLI_MissingNewSymlink(t *testing.T) {
 	tempDir := t.TempDir()
 	target := filepath.Join(tempDir, "target")
 	os.WriteFile(target, []byte("x"), 0644)
 
-	err := run([]string{"file", "absolute", "-e", target}, os.Stdout, os.Stderr)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file", "absolute", "--existing-target", target})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for missing --new-symlink")
 	}
-	if !strings.Contains(err.Error(), "--new-symlink (-n) is required") {
-		t.Errorf("unexpected error: %v", err)
-	}
 }
 
-func TestRun_MissingExistingTarget(t *testing.T) {
+func TestCLI_MissingExistingTarget(t *testing.T) {
 	tempDir := t.TempDir()
 	symlink := filepath.Join(tempDir, "link")
 
-	err := run([]string{"file", "absolute", "-n", symlink}, os.Stdout, os.Stderr)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file", "absolute", "--new-symlink", symlink})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for missing --existing-target")
 	}
-	if !strings.Contains(err.Error(), "--existing-target (-e) is required") {
-		t.Errorf("unexpected error: %v", err)
-	}
 }
 
-func TestRun_Success(t *testing.T) {
+func TestCLI_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	target := filepath.Join(tempDir, "target")
 	os.WriteFile(target, []byte("content"), 0644)
 	symlink := filepath.Join(tempDir, "link")
 
-	r, w, _ := os.Pipe()
-	err := run([]string{"file", "absolute", "-n", symlink, "-e", target}, w, os.Stderr)
-	w.Close()
-
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file", "absolute", "--new-symlink", symlink, "--existing-target", target})
+	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 
-	var buf [4096]byte
-	n, _ := r.Read(buf[:])
-	output := string(buf[:n])
-
-	if !strings.Contains(output, "created symlink") {
-		t.Error("expected success message")
-	}
-}
-
-func TestRun_SuccessLongFlags(t *testing.T) {
-	tempDir := t.TempDir()
-	target := filepath.Join(tempDir, "target")
-	os.WriteFile(target, []byte("content"), 0644)
-	symlink := filepath.Join(tempDir, "link")
-
-	err := run([]string{"file", "absolute", "--new-symlink", symlink, "--existing-target", target}, os.Stdout, os.Stderr)
+	// Verify symlink was created
+	linkDest, err := os.Readlink(symlink)
 	if err != nil {
-		t.Fatalf("expected success, got: %v", err)
+		t.Fatal(err)
+	}
+	absTarget, _ := filepath.Abs(target)
+	if linkDest != absTarget {
+		t.Errorf("expected %s, got %s", absTarget, linkDest)
 	}
 }
 
-func TestRun_SuccessWithForce(t *testing.T) {
+func TestCLI_SuccessWithForce(t *testing.T) {
 	tempDir := t.TempDir()
 	target := filepath.Join(tempDir, "target")
 	os.WriteFile(target, []byte("content"), 0644)
 	symlink := filepath.Join(tempDir, "link")
 	os.Symlink(target, symlink)
 
-	err := run([]string{"file", "absolute", "-n", symlink, "-e", target, "--force"}, os.Stdout, os.Stderr)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file", "absolute", "--new-symlink", symlink, "--existing-target", target, "--force"})
+	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("expected success with --force, got: %v", err)
 	}
 }
 
-func TestRun_SuccessRelative(t *testing.T) {
+func TestCLI_SuccessRelative(t *testing.T) {
 	tempDir := t.TempDir()
 	target := filepath.Join(tempDir, "target")
 	os.WriteFile(target, []byte("content"), 0644)
 	symlink := filepath.Join(tempDir, "link")
 
-	err := run([]string{"file", "relative", "-n", symlink, "-e", target}, os.Stdout, os.Stderr)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file", "relative", "--new-symlink", symlink, "--existing-target", target})
+	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
+
+	linkDest, err := os.Readlink(symlink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.IsAbs(linkDest) {
+		t.Errorf("expected relative path, got: %s", linkDest)
+	}
 }
 
-func TestRun_SuccessFolder(t *testing.T) {
+func TestCLI_SuccessFolder(t *testing.T) {
 	tempDir := t.TempDir()
 	target := filepath.Join(tempDir, "targetdir")
 	os.Mkdir(target, 0755)
 	symlink := filepath.Join(tempDir, "link")
 
-	err := run([]string{"folder", "absolute", "-n", symlink, "-e", target}, os.Stdout, os.Stderr)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"folder", "absolute", "--new-symlink", symlink, "--existing-target", target})
+	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 }
 
-func TestRun_TargetDoesNotExist(t *testing.T) {
+func TestCLI_TargetDoesNotExist(t *testing.T) {
 	tempDir := t.TempDir()
 	symlink := filepath.Join(tempDir, "link")
 
-	err := run([]string{"file", "absolute", "-n", symlink, "-e", "/nonexistent/path"}, os.Stdout, os.Stderr)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file", "absolute", "--new-symlink", symlink, "--existing-target", "/nonexistent/path"})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for nonexistent target")
 	}
@@ -544,45 +514,12 @@ func TestRun_TargetDoesNotExist(t *testing.T) {
 	}
 }
 
-func TestRun_InvalidFlag(t *testing.T) {
-	err := run([]string{"file", "absolute", "--invalid-flag"}, os.Stdout, os.Stderr)
+func TestCLI_WrongArgCount(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"file"})
+	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error for invalid flag")
+		t.Fatal("expected error for missing arguments")
 	}
 }
 
-func TestRun_HelpInMiddle(t *testing.T) {
-	r, w, _ := os.Pipe()
-	err := run([]string{"file", "--help", "absolute"}, w, os.Stderr)
-	w.Close()
-
-	if err != errHelp {
-		t.Errorf("expected errHelp, got: %v", err)
-	}
-
-	var buf [4096]byte
-	n, _ := r.Read(buf[:])
-	output := string(buf[:n])
-
-	if !strings.Contains(output, "symlink - create symlinks without the ln footguns") {
-		t.Error("help output missing header")
-	}
-}
-
-func TestRun_OneArg(t *testing.T) {
-	r, w, _ := os.Pipe()
-	err := run([]string{"file"}, w, os.Stderr)
-	w.Close()
-
-	if err != errUsage {
-		t.Errorf("expected errUsage, got: %v", err)
-	}
-
-	var buf [4096]byte
-	n, _ := r.Read(buf[:])
-	output := string(buf[:n])
-
-	if !strings.Contains(output, "symlink - create symlinks without the ln footguns") {
-		t.Error("usage output missing header")
-	}
-}
