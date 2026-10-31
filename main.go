@@ -1,115 +1,90 @@
+// Command symlink creates symlinks without the ln footguns.
+
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/spf13/cobra"
 )
 
-const usageText = `symlink - create symlinks without the ln footguns
+func newRootCmd() *cobra.Command {
+	var newSymlink, existingTarget string
+	var force bool
 
-Usage:
-  symlink <type> <pathmode> --new-symlink <path> --existing-target <path> [--force]
+	cmd := &cobra.Command{
+		Use:   "symlink <file|folder> <relative|absolute> --new-symlink <path> --existing-target <path>",
+		Short: "Create symlinks without the ln footguns",
+		Long: `symlink - create symlinks without the ln footguns
 
 Arguments:
   type      file or folder - what kind of target you're linking to
   pathmode  relative or absolute - how the symlink stores the path
 
 Flags:
-  -n, --new-symlink      path where the symlink will be created (required)
-  -e, --existing-target  path to the existing file/folder to link to (required)
-  -f, --force            overwrite if symlink already exists (cannot overwrite files/folders)
+  --new-symlink      path where the symlink will be created (required)
+  --existing-target  path to the existing file/folder to link to (required)
+  --force            overwrite if symlink already exists (cannot overwrite files/folders)
 
 Examples:
-  symlink file absolute -n /tmp/mylink -e /home/user/file.txt
-  symlink folder relative -n ./link -e ../target-dir
-  symlink file absolute -n /tmp/mylink -e /tmp/file.txt --force
-`
+  symlink file absolute --new-symlink /tmp/mylink --existing-target /home/user/file.txt
+  symlink folder relative --new-symlink ./link --existing-target ../target-dir
+  symlink file absolute --new-symlink /tmp/mylink --existing-target /tmp/file.txt --force`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				cmd.Help()
+				return fmt.Errorf("")
+			}
+			if len(args) > 2 {
+				return fmt.Errorf("accepts 2 args, received %d", len(args))
+			}
+			return nil
+		},
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			linkType := args[0]
+			pathMode := args[1]
 
-// errHelp is returned when --help is requested (exit 0)
-var errHelp = fmt.Errorf("help requested")
+			if linkType != "file" && linkType != "folder" {
+				return fmt.Errorf("first argument must be 'file' or 'folder', got '%s'", linkType)
+			}
+			if pathMode != "relative" && pathMode != "absolute" {
+				return fmt.Errorf("second argument must be 'relative' or 'absolute', got '%s'", pathMode)
+			}
 
-// errUsage is returned when usage should be shown due to bad args (exit 1)
-var errUsage = fmt.Errorf("usage error")
+			isRelative := pathMode == "relative"
+			expectFile := linkType == "file"
 
-func run(args []string, stdout, stderr *os.File) error {
-	// Handle --help or -h anywhere in args
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, usageText)
-			return errHelp
-		}
+			if err := createSymlink(newSymlink, existingTarget, force, isRelative, expectFile); err != nil {
+				return err
+			}
+
+			fmt.Printf("created symlink: %s -> %s\n", newSymlink, existingTarget)
+			return nil
+		},
 	}
 
-	// Check we have at least 2 positional args
-	if len(args) < 2 {
-		fmt.Fprint(stdout, usageText)
-		return errUsage
-	}
+	cmd.Flags().StringVar(&newSymlink, "new-symlink", "", "path where the symlink will be created")
+	cmd.Flags().StringVar(&existingTarget, "existing-target", "", "path to the existing file/folder to link to")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite if symlink already exists (cannot overwrite files/folders)")
 
-	linkType := args[0]
-	pathMode := args[1]
+	cmd.MarkFlagRequired("new-symlink")
+	cmd.MarkFlagRequired("existing-target")
 
-	// Validate positional args
-	if linkType != "file" && linkType != "folder" {
-		return fmt.Errorf("first argument must be 'file' or 'folder', got '%s'", linkType)
-	}
-	if pathMode != "relative" && pathMode != "absolute" {
-		return fmt.Errorf("second argument must be 'relative' or 'absolute', got '%s'", pathMode)
-	}
-
-	// Parse flags from remaining args
-	fs := flag.NewFlagSet("symlink", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stdout, usageText) }
-
-	var newSymlink, existingTarget string
-	var force bool
-
-	fs.StringVar(&newSymlink, "new-symlink", "", "path where the symlink will be created")
-	fs.StringVar(&newSymlink, "n", "", "path where the symlink will be created (shorthand)")
-	fs.StringVar(&existingTarget, "existing-target", "", "path to the existing file/folder to link to")
-	fs.StringVar(&existingTarget, "e", "", "path to the existing file/folder to link to (shorthand)")
-	fs.BoolVar(&force, "force", false, "overwrite if symlink already exists")
-	fs.BoolVar(&force, "f", false, "overwrite if symlink already exists (shorthand)")
-
-	if err := fs.Parse(args[2:]); err != nil {
-		return err
-	}
-
-	// Validate required flags
-	if newSymlink == "" {
-		return fmt.Errorf("--new-symlink (-n) is required")
-	}
-	if existingTarget == "" {
-		return fmt.Errorf("--existing-target (-e) is required")
-	}
-
-	isRelative := pathMode == "relative"
-	expectFile := linkType == "file"
-
-	if err := createSymlink(newSymlink, existingTarget, force, isRelative, expectFile); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(stdout, "created symlink: %s -> %s\n", newSymlink, existingTarget)
-	return nil
+	return cmd
 }
 
 func main() {
-	err := run(os.Args[1:], os.Stdout, os.Stderr)
-	if err == nil {
-		return
-	}
-	if err == errHelp {
-		return
-	}
-	if err == errUsage {
+	cmd := newRootCmd()
+	if err := cmd.Execute(); err != nil {
+		if err.Error() != "" {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "error: %v\n", err)
-	os.Exit(1)
 }
 
 func createSymlink(newSymlink, existingTarget string, force, isRelative, expectFile bool) error {
