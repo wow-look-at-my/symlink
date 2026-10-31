@@ -1,3 +1,5 @@
+// Command symlink creates symlinks without the ln footguns.
+
 package main
 
 import (
