@@ -522,4 +522,3 @@ func TestCLI_WrongArgCount(t *testing.T) {
 		t.Fatal("expected error for missing arguments")
 	}
 }
-
